@@ -36,6 +36,7 @@ class RaftNode:
 		self.start_election_timer()
 		self.add_peer("127.0.0.1", 50052)
 		self.add_peer("127.0.0.1", 50051)
+		# self.add_peer("127.0.0.1", 50052)
 
 	def add_peer(self, peer_ip:str, peer_port:int):
 		# establish a grpc channel with the peer and add it to the network
@@ -71,6 +72,7 @@ class RaftNode:
 		self.start_heartbeat_timer()
 
 	def start_election(self):
+		self.vote_count = 0
 		if self.node_type == NodeType.LEADER:
 			self.start_election_timer()
 			return
@@ -81,15 +83,14 @@ class RaftNode:
 		for peer in self.network:
 			# send request vote to all peers
 			self.send_request_vote(peer)
-		# now restart the election timer
 			print("request vote sent to " + str(peer))
+		# now restart the election timer
 		# vote for self
-		if self.vote_count > len(self.network)/2:
+		if self.vote_count > (len(self.network)+1)/2:
 			self.node_type = NodeType.LEADER
 			self.start_heartbeat_timer()
 			self.send_heartbeat()
-		else:
-			self.start_election()
+
 		self.start_election_timer()
 
 	def send_request_vote(self, peer:tuple):
@@ -106,6 +107,8 @@ class RaftNode:
 			return
 		if (response.voteGranted):
 			self.vote_count += 1
+		if response.term > self.current_term:
+			self.current_term = response.term
 		print(response)
 
 	def RequestVote(self,request, context):
@@ -114,18 +117,22 @@ class RaftNode:
 		if self.current_term == self.last_voted_term:
 			response.voteGranted = False
 			response.term = self.current_term
-		elif request.prevLogTerm < self.last_log_term:
+		elif request.term < self.current_term:
+			response.voteGranted = False
+			response.term = self.current_term
+		elif request.lastLogTerm < self.last_log_term:
 			response.success = False
 			response.term = self.current_term
-		elif request.prevLogIndex < self.last_log_index:
+		elif request.lastLogIndex < self.last_log_index:
 			response.success = False
 			response.term = self.current_term
 		else:
-			self.current_term = request.term
 			self.node_type = NodeType.FOLLOWER
 			self.last_voted_term = request.term
 			response.voteGranted = True
 			response.term = self.current_term
+		if request.term > self.current_term:
+			self.current_term = request.term
 		self.start_election_timer()
 		print(response)
 		return response
@@ -173,7 +180,6 @@ class RaftNode:
 	def __repr__(self):
 		return f"Node ID: {self.node_id}, Node IP: {self.node_ip}, Node Port: {self.node_port}, Node Type: {self.node_type}"
 	
-
 def startNode():
 	# making grpc connections
 	server = grpc.server(concurrent.futures.ThreadPoolExecutor(max_workers=10))

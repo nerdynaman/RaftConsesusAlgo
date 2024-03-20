@@ -72,6 +72,7 @@ class RaftNode:
 		self.start_heartbeat_timer()
 
 	def start_election(self):
+		self.vote_count = 0
 		if self.node_type == NodeType.LEADER:
 			self.start_election_timer()
 			return
@@ -85,12 +86,11 @@ class RaftNode:
 			print("request vote sent to " + str(peer))
 		# now restart the election timer
 		# vote for self
-		if self.vote_count > len(self.network)/2:
+		if self.vote_count > (len(self.network)+1)/2:
 			self.node_type = NodeType.LEADER
 			self.start_heartbeat_timer()
 			self.send_heartbeat()
-		else:
-			self.start_election()
+
 		self.start_election_timer()
 
 	def send_request_vote(self, peer:tuple):
@@ -107,6 +107,8 @@ class RaftNode:
 			return
 		if (response.voteGranted):
 			self.vote_count += 1
+		if response.term > self.current_term:
+			self.current_term = response.term
 		print(response)
 
 	def RequestVote(self,request, context):
@@ -115,18 +117,22 @@ class RaftNode:
 		if self.current_term == self.last_voted_term:
 			response.voteGranted = False
 			response.term = self.current_term
-		elif request.prevLogTerm < self.last_log_term:
+		elif request.term < self.current_term:
+			response.voteGranted = False
+			response.term = self.current_term
+		elif request.lastLogTerm < self.last_log_term:
 			response.success = False
 			response.term = self.current_term
-		elif request.prevLogIndex < self.last_log_index:
+		elif request.lastLogIndex < self.last_log_index:
 			response.success = False
 			response.term = self.current_term
 		else:
-			self.current_term = request.term
 			self.node_type = NodeType.FOLLOWER
 			self.last_voted_term = request.term
 			response.voteGranted = True
 			response.term = self.current_term
+		if request.term > self.current_term:
+			self.current_term = request.term
 		self.start_election_timer()
 		print(response)
 		return response
