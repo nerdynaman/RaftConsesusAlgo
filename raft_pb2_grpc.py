@@ -24,6 +24,11 @@ class RaftStub(object):
                 request_serializer=raft__pb2.Append_Entries.SerializeToString,
                 response_deserializer=raft__pb2.AppendEntriesResponse.FromString,
                 )
+        self.ServeClient = channel.unary_unary(
+                '/raft.Raft/ServeClient',
+                request_serializer=raft__pb2.Serve_Client.SerializeToString,
+                response_deserializer=raft__pb2.ServeClientResponse.FromString,
+                )
 
 
 class RaftServicer(object):
@@ -41,6 +46,12 @@ class RaftServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def ServeClient(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
 
 def add_RaftServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -53,6 +64,11 @@ def add_RaftServicer_to_server(servicer, server):
                     servicer.AppendEntries,
                     request_deserializer=raft__pb2.Append_Entries.FromString,
                     response_serializer=raft__pb2.AppendEntriesResponse.SerializeToString,
+            ),
+            'ServeClient': grpc.unary_unary_rpc_method_handler(
+                    servicer.ServeClient,
+                    request_deserializer=raft__pb2.Serve_Client.FromString,
+                    response_serializer=raft__pb2.ServeClientResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -95,5 +111,22 @@ class Raft(object):
         return grpc.experimental.unary_unary(request, target, '/raft.Raft/AppendEntries',
             raft__pb2.Append_Entries.SerializeToString,
             raft__pb2.AppendEntriesResponse.FromString,
+            options, channel_credentials,
+            insecure, call_credentials, compression, wait_for_ready, timeout, metadata)
+
+    @staticmethod
+    def ServeClient(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(request, target, '/raft.Raft/ServeClient',
+            raft__pb2.Serve_Client.SerializeToString,
+            raft__pb2.ServeClientResponse.FromString,
             options, channel_credentials,
             insecure, call_credentials, compression, wait_for_ready, timeout, metadata)
