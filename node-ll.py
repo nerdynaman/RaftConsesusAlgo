@@ -29,14 +29,14 @@ class RaftNode:
 			return lines[-1]
 		
 	def __init__(self, node_id:int , node_ip:str, node_port:int , node_type:NodeType):
-		# node identifier
+		#node identifier
 		self.node_id = node_id
 		self.node_ip = node_ip
 		self.node_port = node_port
-		# p2p connections
-		self.network = {} # dict of conn with peers in same cluster
+		#p2p connections
+		self.network = {} #dict of conn with peers in same cluster
 		self.node_type = node_type
-		# election
+		#election
 		if node_id == 1:
 			self.election_timeout = 5
 		elif node_id == 2:
@@ -51,13 +51,13 @@ class RaftNode:
 		self.current_term = 0
 		self.last_voted_term = None
 		self.vote_count = 0
-		# leader
+		#leader
 		self.heartbeat_timeout = 1
 		self.heartbeat_timer = None
-    # leader lease
-		self.leader_lease_timeout = 4 # fix this between (2-10 seconds), simple if less than 5 seconds
+		# leader lease
+		self.leader_lease_timeout = 4
 		self.leader_lease = None
-		# logs
+		#logs
 		self.last_log_index = -1
 		self.last_log_term = -1
 		self.leader_commit = -1 
@@ -178,8 +178,8 @@ class RaftNode:
 		self.network[(peer_ip, peer_port)] = channel
 		ip_port_to_nodeid_mapping[(peer_ip, peer_port)] = node_id
 		print("peer added success")
-  
-  def start_leader_lease_timer(self):
+
+	def start_leader_lease_timer(self):
 		# responsible for starting the leader lease timer
 		if self.leader_lease:
 			self.leader_lease.cancel()
@@ -221,7 +221,7 @@ class RaftNode:
 		operations = []
 		commit_counter = 0
 		if(len(operations_client_requested) > 0) or self.leader_commit < self.last_log_index:
-			print("first")
+			print(f"first operationd client requested: {operations_client_requested} leader commit: {self.leader_commit} last log index: {self.last_log_index}")
 			if len(operations_client_requested) > 0 and self.leader_commit == self.last_log_index: 
 				print("first second")
 				i = operations_client_requested[0]
@@ -233,28 +233,32 @@ class RaftNode:
 				self.last_log_term = self.current_term
 				self.generate_metadata_file(self.leader_commit, self.current_term, self.node_id, self.last_log_index, self.last_log_term)
 			for peer in self.network:
+				operations = []
 				node_id_peer = ip_port_to_nodeid_mapping[peer]
 				total_no_of_logs = self.get_total_logs(self.node_id)
-				print(total_no_of_logs, node_id_peer, self.array_next_index[node_id_peer], self.last_log_index)
+				print(f"total no of logs: {total_no_of_logs}, node id peer: {node_id_peer}, array next index: {self.array_next_index[node_id_peer]}, last log index: {self.last_log_index}")
 				logss_appended = self.read_last_n_write_entries(self.node_id, total_no_of_logs - self.array_next_index[node_id_peer] + 1)
-				print(logss_appended)
 				if total_no_of_logs - self.array_next_index[node_id_peer] + 1 > total_no_of_logs:
 					logss_appended = self.read_last_n_write_entries(self.node_id, total_no_of_logs)
+				print(f"Sending {logss_appended} to be appended to Node {self.node_id}")
+				print("next index, peer", self.array_next_index[node_id_peer], node_id_peer)
 				operations.extend(logss_appended)
 				request = raft_pb2.Append_Entries(term=self.current_term, leaderId=str(self.node_id), prevLogIndex=self.last_log_index, prevLogTerm=self.last_log_term, entries=operations, leaderCommit=self.leader_commit)
 				print("sending heartbeat")
-				if self.send_append_entries(peer, request=request):
+				response = None
+				response = self.send_append_entries(peer, request=request)
+				print("RESPONSE: ", response)
+				if response == True:
 					commit_counter += 1
 					self.array_next_index[node_id_peer] = self.last_log_index + 1
-				else:
+				elif response == False:
 					if self.array_next_index[node_id_peer] != 0:
 						self.array_next_index[node_id_peer] -= 1
 				operations = []
-			print(pending_operations, self.leader_commit, self.last_log_index)
+			print(f"pending_operations {pending_operations}, self.leader_commit {self.leader_commit}, self.last_log_index {self.last_log_index}")
 			if commit_counter >= (len(self.network) + 1)//2:
 				if (self.leader_commit) < self.last_log_index and len(pending_operations) > 0:
 					get_operations_answers.append(pending_operations[0] + " 1")
-					# if pending_operations[0].split()[-2] in self.key_Value_calculator:
 					self.key_Value_calculator[pending_operations[0].split()[-2]] = pending_operations[0].split()[-1]
 					pending_operations.pop(0)
 				self.leader_commit += 1
@@ -270,15 +274,19 @@ class RaftNode:
 				operations = []
 				if self.array_next_index[node_id_peer] != self.leader_commit + 1:
 					total_no_of_logs = self.get_total_logs(self.node_id)
-					print(total_no_of_logs, node_id_peer, self.array_next_index[node_id_peer])
+					print(f"total no of logs: {total_no_of_logs}, node id peer: {node_id_peer}, array next index: {self.array_next_index[node_id_peer]}, last log index: {self.last_log_index}")
 					logss_appended = self.read_last_n_write_entries(self.node_id, total_no_of_logs - self.array_next_index[node_id_peer] + 1)
 					operations.extend(logss_appended)
+					print("LOGS BEING SENT ARE", operations)
 				request = raft_pb2.Append_Entries(term=self.current_term, leaderId=str(self.node_id), prevLogIndex=self.last_log_index, prevLogTerm=self.last_log_term, entries=operations, leaderCommit=self.leader_commit)
 				send_success = self.send_append_entries(peer, request=request)
-				if self.array_next_index[node_id_peer] != self.leader_commit + 1 and send_success:
+				if self.array_next_index[node_id_peer] != self.leader_commit + 1 and send_success == True:
 					self.array_next_index[node_id_peer] = self.leader_commit + 1
-				if send_success:
+				elif send_success == True :
 					self.array_next_index[node_id_peer] = self.last_log_index + 1
+				elif send_success == False:
+					if self.array_next_index[node_id_peer] > 0: 
+						self.array_next_index[node_id_peer] -= 1
 		else:
 			print("third")
 			self.generate_log_file(["NO-OP"], self.current_term, self.node_id, 0)
@@ -288,10 +296,11 @@ class RaftNode:
 			for peer in self.network:
 				node_id_peer = ip_port_to_nodeid_mapping[peer]
 				request = raft_pb2.Append_Entries(term=self.current_term, leaderId=str(self.node_id), prevLogIndex=self.last_log_index, prevLogTerm=self.last_log_term, entries=["NO-OP"], leaderCommit=self.leader_commit)
-				if self.send_append_entries(peer, request=request):
+				response = self.send_append_entries(peer, request=request)
+				if response == True :
 					commit_counter += 1
 					self.array_next_index[node_id_peer] = self.last_log_index + 1
-				else:
+				else :
 					print("failed")
 				print("sending heartbeat")
 			if commit_counter >= (len(self.network) + 1)//2:
@@ -302,6 +311,8 @@ class RaftNode:
 
 
 	def start_election(self):
+		if self.get_lease_duration() > 0: # NOTE: this condition will never hit
+			return
 		self.vote_count = 0
 		if self.node_type == NodeType.LEADER:
 			self.start_election_timer()
@@ -310,20 +321,23 @@ class RaftNode:
 		self.node_type = NodeType.CANDIDATE
 		self.vote_count += 1
 		self.last_voted_term = self.current_term
-		arr =[ ]
+		leaseArr = []
 		for peer in self.network:
 			# send request vote to all peers
 			leaseDuration = self.send_request_vote(peer)
-			arr.append(leaseDuration)
+			leaseArr.append(leaseDuration)
 			print("request vote sent to " + str(peer))
 		# now restart the election timer
 		# vote for self
-		print(arr)
-		if self.vote_count > (len(self.network)+1)/2:
+		if self.vote_count > (len(self.network)+1)//2:
 			self.node_type = NodeType.LEADER
+			for i in self.array_next_index:
+				self.array_next_index[i] = self.get_total_logs(self.node_id)
+			self.create_key_value_array(self.node_id)
 			self.start_heartbeat_timer()
-			self.send_heartbeat()
+			self.send_heartbeat(True)
 			self.start_leader_lease_timer()
+
 		self.start_election_timer()
 
 	def send_request_vote(self, peer:tuple):
@@ -340,13 +354,12 @@ class RaftNode:
 		except grpc.RpcError as e:
 			print("error: ", e)
 			return
-		# if (response.voteGranted):
 		if (response.voteGranted) and response.leaseDuration <= 0:
 			self.vote_count += 1
 		if response.term > self.current_term:
 			self.current_term = response.term
 		print(response)
-    return response.leaseDuration
+		return response.leaseDuration
 
 	def RequestVote(self,request, context):
 		print("RequestVote called")
@@ -372,7 +385,7 @@ class RaftNode:
 				self.heartbeat_timer.cancel
 		if request.term > self.current_term:
 			self.current_term = request.term
-    response.leaseDuration = self.get_lease_duration()
+		response.leaseDuration = self.get_lease_duration()
 		self.start_election_timer()
 		print(response)
 		return response
@@ -468,6 +481,8 @@ class RaftNode:
 		else:
 			print(5)
 			response.success = False
+			if self.last_log_index == request.prevLogIndex and self.last_log_term == request.prevLogTerm:
+				response.success = True
 			if len(request.entries) == (request.prevLogIndex + 1):
 				response.success = True
 				self.generate_log_file(request.entries, self.current_term, self.node_id, (self.get_total_logs(self.node_id)))
@@ -476,10 +491,10 @@ class RaftNode:
 				self.last_log_term = self.current_term
 			response.term = self.current_term
 			# self.leader_commit = request.leaderCommit
+		self.start_leader_lease_timer()
 		print(response)
 		self.generate_metadata_file(self.leader_commit, self.current_term, self.node_id, self.last_log_index, self.last_log_term)
-		self.start_leader_lease_timer()
-    return response
+		return response
 
 	def send_append_entries(self, peer:tuple, request=None):
 		# channel = self.network[peer[0], peer[1]]
@@ -494,8 +509,8 @@ class RaftNode:
 			# DO response check
 		except grpc.RpcError as e:
 			print("error ", e)
-			return False
-		print(response)
+			return None
+		print("response success", response.success)
 		return response.success
 	
 	def get_value_from_database(self, key):
@@ -521,33 +536,32 @@ class RaftNode:
 		return answer
 
 	def ServeClient(self, request, context):
-		print(f"ServeClient called {self.node_id}")
-		# response = raft_pb2.ServeClientResponse()
+			print(f"ServeClient called {self.node_id}")
+			# response = raft_pb2.ServeClientResponse()
 
-		operation = request.Request.strip().split()
+			operation = request.Request.strip().split()
 
-		# check if the node is the leader
-		if self.node_type != NodeType.LEADER:
-			return raft_pb2.ServeClientResponse(Data="INCORRECT Leader", LeaderID=str(self.node_id), Success=False)
+			# check if the node is the leader
+			if self.node_type != NodeType.LEADER:
+					return raft_pb2.ServeClientResponse(Data="INCORRECT Leader", LeaderID=str(self.node_id), Success=False)
 
-		if operation[0] == "GET":
-			key = operation[1]
-			# NOTE: Harshit implement this
-			# Since we have leader lease, we can directly get the value from the database
-			value = self.get_value_from_database(key)
-			return raft_pb2.ServeClientResponse(Data=value, LeaderID=str(self.node_id), Success=True)
-		elif operation[0] == "SET":
-			key, value = operation[1], operation[2]
-			# NOTE: Harshit implement this
-			self.set_value_to_database(key, value)
-			return raft_pb2.ServeClientResponse(Data="SET operation successful", LeaderID=str(self.node_id), Success=True)
-		else:
-			return raft_pb2.ServeClientResponse(Data="INVALID operation", LeaderID=str(self.node_id), Success=False)
+			if operation[0] == "GET":
+					key = operation[1]
+					# NOTE: Harshit implement this
+					value = self.get_value_from_database(key)
+					return raft_pb2.ServeClientResponse(Data=value, LeaderID=str(self.node_id), Success=True)
+			elif operation[0] == "SET":
+					key, value = operation[1], operation[2]
+					# NOTE: Harshit implement this
+					self.set_value_to_database(key, value)
+					return raft_pb2.ServeClientResponse(Data="SET operation successful", LeaderID=str(self.node_id), Success=True)
+			else:
+					return raft_pb2.ServeClientResponse(Data="INVALID operation", LeaderID=str(self.node_id), Success=False)
 
-	def __str__(self):
+	def _str_(self):
 		return f"Node ID: {self.node_id}, Node IP: {self.node_ip}, Node Port: {self.node_port}, Node Type: {self.node_type}"
 
-	def __repr__(self):
+	def _repr_(self):
 		return f"Node ID: {self.node_id}, Node IP: {self.node_ip}, Node Port: {self.node_port}, Node Type: {self.node_type}"
 
 
