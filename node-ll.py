@@ -52,10 +52,11 @@ class RaftNode:
 		self.last_voted_term = None
 		self.vote_count = 0
 		#leader
+		self.currLeader = self.node_id
 		self.heartbeat_timeout = 1
 		self.heartbeat_timer = None
 		# leader lease
-		self.leader_lease_timeout = 4
+		self.leader_lease_timeout = 3
 		self.leader_lease = None
 		#logs
 		self.last_log_index = -1
@@ -179,12 +180,18 @@ class RaftNode:
 		ip_port_to_nodeid_mapping[(peer_ip, peer_port)] = node_id
 		print("peer added success")
 
+	def leader_lease_expired(self):
+		self.node_type = NodeType.FOLLOWER
+		self.heartbeat_timer.cancel()
+		self.start_election_timer()
+		return
+	
 	def start_leader_lease_timer(self):
 		# responsible for starting the leader lease timer
 		if self.leader_lease:
 			self.leader_lease.cancel()
 
-		self.leader_lease = threading.Timer(self.leader_lease_timeout, lambda: None)
+		self.leader_lease = threading.Timer(self.leader_lease_timeout, self.leader_lease_expired)
 		self.leader_lease.endTime = time.time() + self.leader_lease_timeout
 		self.leader_lease.start()
   
@@ -220,6 +227,7 @@ class RaftNode:
 		# TODO: Harshit look at this
 		operations = []
 		commit_counter = 0
+		response_count = 0
 		if(len(operations_client_requested) > 0) or self.leader_commit < self.last_log_index:
 			print(f"first operationd client requested: {operations_client_requested} leader commit: {self.leader_commit} last log index: {self.last_log_index}")
 			if len(operations_client_requested) > 0 and self.leader_commit == self.last_log_index: 
@@ -249,9 +257,11 @@ class RaftNode:
 				response = self.send_append_entries(peer, request=request)
 				print("RESPONSE: ", response)
 				if response == True:
+					response_count += 1
 					commit_counter += 1
 					self.array_next_index[node_id_peer] = self.last_log_index + 1
 				elif response == False:
+					response_count += 1
 					if self.array_next_index[node_id_peer] != 0:
 						self.array_next_index[node_id_peer] -= 1
 				operations = []
@@ -281,10 +291,13 @@ class RaftNode:
 				request = raft_pb2.Append_Entries(term=self.current_term, leaderId=str(self.node_id), prevLogIndex=self.last_log_index, prevLogTerm=self.last_log_term, entries=operations, leaderCommit=self.leader_commit)
 				send_success = self.send_append_entries(peer, request=request)
 				if self.array_next_index[node_id_peer] != self.leader_commit + 1 and send_success == True:
+					response_count += 1
 					self.array_next_index[node_id_peer] = self.leader_commit + 1
 				elif send_success == True :
+					response_count += 1
 					self.array_next_index[node_id_peer] = self.last_log_index + 1
 				elif send_success == False:
+					response_count += 1
 					if self.array_next_index[node_id_peer] > 0: 
 						self.array_next_index[node_id_peer] -= 1
 		else:
@@ -298,6 +311,7 @@ class RaftNode:
 				request = raft_pb2.Append_Entries(term=self.current_term, leaderId=str(self.node_id), prevLogIndex=self.last_log_index, prevLogTerm=self.last_log_term, entries=["NO-OP"], leaderCommit=self.leader_commit)
 				response = self.send_append_entries(peer, request=request)
 				if response == True :
+					response_count += 1
 					commit_counter += 1
 					self.array_next_index[node_id_peer] = self.last_log_index + 1
 				else :
@@ -306,7 +320,12 @@ class RaftNode:
 			if commit_counter >= (len(self.network) + 1)//2:
 				self.leader_commit += 1
 			self.generate_metadata_file(self.leader_commit, self.current_term, self.node_id, self.last_log_index, self.last_log_term)
-
+		if response_count >= (len(self.network) + 1)//2:
+			self.start_leader_lease_timer()
+		# else:
+		# 	# self.node_type = NodeType.FOLLOWER
+		# 	self.heartbeat_timer.cancel()
+		# 	return
 		self.start_heartbeat_timer()
 
 
@@ -352,7 +371,8 @@ class RaftNode:
 		try:
 			response = stub.RequestVote(request)
 		except grpc.RpcError as e:
-			print("error: ", e)
+			# print("error: ", e)
+			print("ERROR")
 			return
 		if (response.voteGranted) and response.leaseDuration <= 0:
 			self.vote_count += 1
@@ -391,6 +411,7 @@ class RaftNode:
 		return response
 
 	def AppendEntries(self, request, context):
+		self.currLeader = request.leaderId
 		print("AppendEntries called")
 		print(request.entries)
 		print(get_operations_answers)
@@ -491,7 +512,7 @@ class RaftNode:
 				self.last_log_term = self.current_term
 			response.term = self.current_term
 			# self.leader_commit = request.leaderCommit
-		self.start_leader_lease_timer()
+		# self.start_leader_lease_timer()
 		print(response)
 		self.generate_metadata_file(self.leader_commit, self.current_term, self.node_id, self.last_log_index, self.last_log_term)
 		return response
@@ -508,7 +529,7 @@ class RaftNode:
 			response = stub.AppendEntries(request)
 			# DO response check
 		except grpc.RpcError as e:
-			print("error ", e)
+			print("ERROR")
 			return None
 		print("response success", response.success)
 		return response.success
@@ -543,20 +564,20 @@ class RaftNode:
 
 			# check if the node is the leader
 			if self.node_type != NodeType.LEADER:
-					return raft_pb2.ServeClientResponse(Data="INCORRECT Leader", LeaderID=str(self.node_id), Success=False)
+					return raft_pb2.ServeClientResponse(Data="INCORRECT Leader", LeaderID=str(self.currLeader), Success=False)
 
 			if operation[0] == "GET":
 					key = operation[1]
 					# NOTE: Harshit implement this
 					value = self.get_value_from_database(key)
-					return raft_pb2.ServeClientResponse(Data=value, LeaderID=str(self.node_id), Success=True)
+					return raft_pb2.ServeClientResponse(Data=value, LeaderID=str(self.currLeader), Success=True)
 			elif operation[0] == "SET":
 					key, value = operation[1], operation[2]
 					# NOTE: Harshit implement this
 					self.set_value_to_database(key, value)
-					return raft_pb2.ServeClientResponse(Data="SET operation successful", LeaderID=str(self.node_id), Success=True)
+					return raft_pb2.ServeClientResponse(Data="SET operation successful", LeaderID=str(self.currLeader), Success=True)
 			else:
-					return raft_pb2.ServeClientResponse(Data="INVALID operation", LeaderID=str(self.node_id), Success=False)
+					return raft_pb2.ServeClientResponse(Data="INVALID operation", LeaderID=str(self.currLeader), Success=False)
 
 	def _str_(self):
 		return f"Node ID: {self.node_id}, Node IP: {self.node_ip}, Node Port: {self.node_port}, Node Type: {self.node_type}"
