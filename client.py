@@ -18,38 +18,53 @@ class RaftClient:
         try:
             response = stub.ServeClient(raft_pb2.Serve_Client(Request=request))
             if response.Success:
-                return response.Data, response.LeaderID, response.Success
+                self.leader_id = response.LeaderID
+                return response
             else:
+                if response.LeaderID != self.leader_id:
+                    self.leader_id = response.LeaderID
+                else:
+                    self.leader_id = None
                 if response.Data == "INCORRECT Leader":
                     print(f"FAIL: Node {response.LeaderID} is not the leader")
                 elif response.Data == "INVALID operation":
                     print(f"FAIL: Invalid {request} operation")
+            return response
         except grpc.RpcError:
             print(f"FAIL: Node {self.leader_id} is not the leader")
+            return None
     
     def serve_client(self, request):
         if self.leader_id is not None:
-            self.check_leader(request=request)
+            response = self.check_leader(request=request)
+            if response is not None and response.Success:
+                return response.Data, response.LeaderID, response.Success
+        # now we need to find the leader and every time we request a node it will return the expected leader
             
-        
-        for address in self.node_addresses:
-            channel = grpc.insecure_channel(address)
-            print(f"Trying to connect to {address}")
+        for i in range(len(self.node_addresses)):
+            if self.leader_id is not None:
+                channel = grpc.insecure_channel(self.get_leader_address())
+            else:
+                channel = grpc.insecure_channel(self.node_addresses[i])
             stub = raft_pb2_grpc.RaftStub(channel)
             try:
                 response = stub.ServeClient(raft_pb2.Serve_Client(Request=request))
-                print(response)
-                self.leader_id = response.LeaderID # Update leader_id
-                self.check_leader(request)
                 if response.Success:
+                    self.leader_id = response.LeaderID
                     return response.Data, response.LeaderID, response.Success
                 else:
+                    self.leader_id = response.LeaderID
                     if response.Data == "INCORRECT Leader":
                         print(f"FAIL: Node {response.LeaderID} is not the leader")
                     elif response.Data == "INVALID operation":
                         print(f"FAIL: Invalid {request} operation")
+                    if self.leader_id == i+1:
+                        self.leader_id = None
             except grpc.RpcError:
-                print(f"FAIL: Node {address} is not reachable - RpcError")
+                print(f"FAIL: Node {i+1} is not the leader")
+
+        
+
         return None, None, False
 
 def main():
