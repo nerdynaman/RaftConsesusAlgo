@@ -12,6 +12,7 @@ message Request_Vote {
 message RequestVoteResponse {
 	sint32 term = 1;
 	bool voteGranted = 2;
+	float leaseDuration = 3;
 }
 
 message Entry {

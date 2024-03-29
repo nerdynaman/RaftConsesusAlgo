@@ -145,7 +145,10 @@ class RaftNode:
 			# Read existing content
 			existing_content = log_file.readlines()
 			return len(existing_content)
-	
+	def dump_commit(self, Node_id, commit):
+		content = f"Node {Node_id} {(self.node_type)} committed the entry {commit} to the state machine."
+		with open (f"logs_node_{Node_id}/dump.txt", "a") as dump:
+			dump.write(content)
 	def generate_metadata_file(self, commit_length, term, node_id, last_log_index, last_log_term):
 		with open(f"logs_node_{node_id}/metadata.txt", "a+") as metadata_file:
 			# Move cursor to the beginning of the file
@@ -182,6 +185,9 @@ class RaftNode:
 
 	def leader_lease_expired(self):
 		self.node_type = NodeType.FOLLOWER
+		with open (f"logs_node_{self.node_id}/dump.txt", "a") as dump:
+			content = f"{self.node_id} Stepping Down"
+			dump.write(content)
 		self.heartbeat_timer.cancel()
 		self.start_election_timer()
 		return
@@ -272,6 +278,7 @@ class RaftNode:
 					self.key_Value_calculator[pending_operations[0].split()[-2]] = pending_operations[0].split()[-1]
 					pending_operations.pop(0)
 				self.leader_commit += 1
+				self.dump_commit(self.node_id, self.leader_commit)
 				self.generate_metadata_file(self.leader_commit, self.current_term, self.node_id, self.last_log_index, self.last_log_term)
 			else:
 				if len(pending_operations) > 0:
@@ -319,9 +326,14 @@ class RaftNode:
 				print("sending heartbeat")
 			if commit_counter >= (len(self.network) + 1)//2:
 				self.leader_commit += 1
+				self.dump_commit(self.node_id, self.leader_commit)
 			self.generate_metadata_file(self.leader_commit, self.current_term, self.node_id, self.last_log_index, self.last_log_term)
 		if response_count >= (len(self.network) + 1)//2:
 			self.start_leader_lease_timer()
+		else:
+			content = f"Leader {self.node_id} lease renewal failed. Stepping Down"
+			with open (f"logs_node_{self.node_id}/dump.txt", "a") as dump:
+				dump.write(content)
 		# else:
 		# 	# self.node_type = NodeType.FOLLOWER
 		# 	self.heartbeat_timer.cancel()
@@ -330,6 +342,9 @@ class RaftNode:
 
 
 	def start_election(self):
+		with open (f"logs_node_{self.node_id}/dump.txt", "a") as dump:
+			content = f"Node {self.node_id} election timer timed out, Starting election"
+			dump.write(content)
 		if self.get_lease_duration() > 0: # NOTE: this condition will never hit
 			return
 		self.vote_count = 0
@@ -356,6 +371,9 @@ class RaftNode:
 			self.start_heartbeat_timer()
 			self.send_heartbeat(True)
 			self.start_leader_lease_timer()
+			content = f"Node {self.node_id} became the leader for term {self.current_term}"
+			with open (f"logs_node_{self.node_id}/dump.txt", "a") as dump:
+				dump.write(content)
 
 		self.start_election_timer()
 
@@ -372,6 +390,9 @@ class RaftNode:
 			response = stub.RequestVote(request)
 		except grpc.RpcError as e:
 			# print("error: ", e)
+			content = f"Error occurred while sending RPC to Node {ip_port_to_nodeid_mapping[peer]}"
+			with open (f"logs_node_{self.node_id}/dump.txt", "a") as dump:
+				dump.write(content)
 			print("ERROR")
 			return
 		if (response.voteGranted) and response.leaseDuration <= 0:
@@ -383,6 +404,7 @@ class RaftNode:
 
 	def RequestVote(self,request, context):
 		print("RequestVote called")
+		flag = 0
 		response = raft_pb2.RequestVoteResponse()
 		if self.current_term == self.last_voted_term:
 			response.voteGranted = False
@@ -397,7 +419,12 @@ class RaftNode:
 			response.success = False
 			response.term = self.current_term
 		else:
+			flag = 1
 			self.node_type = NodeType.FOLLOWER
+			if self.node_type == NodeType.LEADER:
+				with open (f"logs_node_{self.node_id}/dump.txt", "a") as dump:
+					content = f"{self.node_id} stepping down"
+					dump.write(content)
 			self.last_voted_term = request.term
 			response.voteGranted = True
 			response.term = self.current_term
@@ -405,10 +432,26 @@ class RaftNode:
 				self.heartbeat_timer.cancel
 		if request.term > self.current_term:
 			self.current_term = request.term
+		content = ""
+		if flag == 1:
+			content = f"Vote granted for Node {request.candidateId} in term {request.term}"
+		if flag == 0:
+			content = f"Vote denied for Node {request.candidateId} in term {request.term}"
+		with open (f"logs_node_{self.node_id}/dump.txt", "a") as dump:
+			dump.write(content)
 		response.leaseDuration = self.get_lease_duration()
 		self.start_election_timer()
 		print(response)
 		return response
+
+	def dump_accept_entries(self, leaderID):
+		content = f"Node {self.node_id} accepted AppendEntries RPC from {leaderID}"
+		with open (f"logs_node_{self.node_id}/dump.txt", "a") as dump:
+			dump.write(content)
+	def dump_reject_entries(self, leaderID):
+		content = f"Node {self.node_id} rejected AppendEntries RPC from {leaderID}."
+		with open (f"logs_node_{self.node_id}/dump.txt", "a") as dump:
+			dump.write(content)
 
 	def AppendEntries(self, request, context):
 		self.currLeader = request.leaderId
@@ -426,32 +469,44 @@ class RaftNode:
 			print(f"1 append entries, request.term: {request.term}, self.current_term: {self.current_term}")
 			response.success = False
 			response.term = self.current_term
+			self.dump_reject_entries(request.leaderId)
 			# self.generate_metadata_file(self.leader_commit, self.current_term, self.node_id, self.last_log_index, self.last_log_term)
 		# elif TODO: Harshit implement the rest of the logic
 		elif self.node_type == NodeType.LEADER:
 			print(2)
 			response.success = False
 			response.term = self.current_term
+			self.dump_reject_entries(request.leaderId)
 			# self.generate_metadata_file(self.leader_commit, self.current_term, self.node_id, self.last_log_index, self.last_log_term)
 		elif len(request.entries) == 0:
 			print(3)
 			self.current_term = request.term
 			self.node_type = NodeType.FOLLOWER
+			if self.node_type == NodeType.LEADER:
+				with open (f"logs_node_{self.node_id}/dump.txt", "a") as dump:
+					content = f"{self.node_id} stepping down"
+					dump.write(content)
 			self.last_voted_term = request.term
 			self.start_election_timer()
 			response.success = True
 			response.term = self.current_term
 			self.leader_commit = request.leaderCommit
+			self.dump_accept_entries(request.leaderId)
 			# self.generate_metadata_file(self.leader_commit, self.current_term, self.node_id, self.last_log_index, self.last_log_term)
 		elif self.last_log_index < request.prevLogIndex:
 			print(4)
 			self.current_term = request.term
 			self.node_type = NodeType.FOLLOWER
+			if self.node_type == NodeType.LEADER:
+				with open (f"logs_node_{self.node_id}/dump.txt", "a") as dump:
+					content = f"{self.node_id} stepping down"
+					dump.write(content)
 			self.last_voted_term = request.term
 			self.start_election_timer()
 			response.success = True
 			response.term = self.current_term
 			self.leader_commit = request.leaderCommit
+			self.dump_accept_entries(request.leaderId)
 
 			print("Adding entry to log file")
 			n_garbage = 1
@@ -482,6 +537,9 @@ class RaftNode:
 						self.leader_commit = request.leaderCommit
 						self.last_log_index = self.get_total_logs(self.node_id) - 1
 						self.last_log_term = self.current_term
+						self.dump_accept_entries(request.leaderId)
+					else:
+						self.dump_reject_entries(request.leaderId)
 					response.term = self.current_term
 					print(response)
 					self.generate_metadata_file(self.leader_commit, self.current_term, self.node_id, self.last_log_index, self.last_log_term)
@@ -501,15 +559,22 @@ class RaftNode:
 			self.leader_commit = request.leaderCommit
 		else:
 			print(5)
+			flag = 0
 			response.success = False
 			if self.last_log_index == request.prevLogIndex and self.last_log_term == request.prevLogTerm:
 				response.success = True
+				flag = 1
 			if len(request.entries) == (request.prevLogIndex + 1):
+				flag = 1
 				response.success = True
 				self.generate_log_file(request.entries, self.current_term, self.node_id, (self.get_total_logs(self.node_id)))
 				self.leader_commit = request.leaderCommit
 				self.last_log_index = self.get_total_logs(self.node_id) - 1
 				self.last_log_term = self.current_term
+			if flag == 0:
+				self.dump_reject_entries(request.leaderId)
+			else:
+				self.dump_accept_entries(request.leaderId)
 			response.term = self.current_term
 			# self.leader_commit = request.leaderCommit
 		# self.start_leader_lease_timer()
@@ -522,6 +587,9 @@ class RaftNode:
 		channel = grpc.insecure_channel(f"{peer[0]}:{peer[1]}")
 		stub = raft_pb2_grpc.RaftStub(channel)
 		# compressing the request by calling Append_Entries mentioned in Raft.proto
+		with open (f"logs_node_{self.node_id}/dump.txt", "a") as dump:
+			content = f"Leader {self.node_id} sending heartbeat & Renewing Lease"
+			dump.write(content)
 		if not request:
 			# TODO: Harsh look at this
 			request = raft_pb2.Append_Entries(term=self.current_term, leaderId=str(self.node_id), prevLogIndex=self.last_log_index, prevLogTerm=self.last_log_term, entries=[], leaderCommit=self.leader_commit)
@@ -529,6 +597,9 @@ class RaftNode:
 			response = stub.AppendEntries(request)
 			# DO response check
 		except grpc.RpcError as e:
+			content = f"Error occurred while sending RPC to Node {ip_port_to_nodeid_mapping[peer]}"
+			with open (f"logs_node_{self.node_id}/dump.txt", "a") as dump:
+				dump.write(content)
 			print("ERROR")
 			return None
 		print("response success", response.success)
@@ -570,11 +641,17 @@ class RaftNode:
 					key = operation[1]
 					# NOTE: Harshit implement this
 					value = self.get_value_from_database(key)
+					content = f"Node {self.node_id} (leader) received an {request} request"
+					with open (f"logs_node_{self.node_id}/dump.txt", "a") as dump:
+						dump.write(content)
 					return raft_pb2.ServeClientResponse(Data=value, LeaderID=str(self.currLeader), Success=True)
 			elif operation[0] == "SET":
 					key, value = operation[1], operation[2]
 					# NOTE: Harshit implement this
 					self.set_value_to_database(key, value)
+					content = f"Node {self.node_id} (leader) received an {request} request"
+					with open (f"logs_node_{self.node_id}/dump.txt", "a") as dump:
+						dump.write(content)
 					return raft_pb2.ServeClientResponse(Data="SET operation successful", LeaderID=str(self.currLeader), Success=True)
 			else:
 					return raft_pb2.ServeClientResponse(Data="INVALID operation", LeaderID=str(self.currLeader), Success=False)
@@ -635,4 +712,14 @@ if __name__ == "__main__":
 		with open("logs_node_4/metadata.txt", "w") as metadata_file:
 			pass
 		with open("logs_node_5/metadata.txt", "w") as metadata_file:
+			pass
+		with open("logs_node_1/dump.txt", "w") as dump:
+			pass
+		with open("logs_node_2/dump.txt", "w") as dump:
+			pass
+		with open("logs_node_3/dump.txt", "w") as dump:
+			pass
+		with open("logs_node_4/dump.txt", "w") as dump:
+			pass
+		with open("logs_node_5/dump.txt", "w") as dump:
 			pass
