@@ -19,6 +19,7 @@ class RaftClient:
             response = stub.ServeClient(raft_pb2.Serve_Client(Request=request))
             if response.Success:
                 self.leader_id = response.LeaderID
+                print(f"Leader IS {self.leader_id}")
                 return response
             else:
                 if response.LeaderID != self.leader_id:
@@ -26,15 +27,17 @@ class RaftClient:
                 else:
                     self.leader_id = None
                 if response.Data == "INCORRECT Leader":
-                    print(f"FAIL: Node {response.LeaderID} is not the leader")
+                    print(f"FAIL1: Node {response.LeaderID} is not the leader")
                 elif response.Data == "INVALID operation":
                     print(f"FAIL: Invalid {request} operation")
             return response
         except grpc.RpcError:
-            print(f"FAIL: Node {self.leader_id} is not the leader")
+            self.leader_id = None
+            print(f"FAIL2: Node {self.leader_id} is not the leader")
             return None
     
     def serve_client(self, request):
+        print("Leader ID: ", self.leader_id)
         if self.leader_id is not None:
             response = self.check_leader(request=request)
             if response is not None and response.Success:
@@ -55,13 +58,13 @@ class RaftClient:
                 else:
                     self.leader_id = response.LeaderID
                     if response.Data == "INCORRECT Leader":
-                        print(f"FAIL: Node {response.LeaderID} is not the leader")
+                        print(f"FAIL3: Node {i+1} is not the leader")
                     elif response.Data == "INVALID operation":
                         print(f"FAIL: Invalid {request} operation")
                     if self.leader_id == i+1:
                         self.leader_id = None
             except grpc.RpcError:
-                print(f"FAIL: Node {i+1} is not the leader")
+                print(f"FAIL4: Node {i+1} is not the leader")
 
         
 
@@ -72,6 +75,7 @@ def main():
     client = RaftClient(node_addresses)
 
     while True:
+        print(client.leader_id, "leader")
         operation = input("Enter operation (GET/SET key value): ")
         if operation.lower().startswith('set'):
             _, key, value = operation.split()

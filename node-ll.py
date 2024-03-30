@@ -635,6 +635,10 @@ class RaftNode:
 		return answer
 
 	def ServeClient(self, request, context):
+			if self.node_type == NodeType.LEADER:
+				leader = self.node_id
+			else:
+				leader = self.currLeader
 			print(f"ServeClient called {self.node_id}")
 			# response = raft_pb2.ServeClientResponse()
 
@@ -642,7 +646,7 @@ class RaftNode:
 
 			# check if the node is the leader
 			if self.node_type != NodeType.LEADER:
-					return raft_pb2.ServeClientResponse(Data="INCORRECT Leader", LeaderID=str(self.currLeader), Success=False)
+					return raft_pb2.ServeClientResponse(Data="INCORRECT Leader", LeaderID=str(leader), Success=False)
 
 			if operation[0] == "GET":
 					key = operation[1]
@@ -651,7 +655,7 @@ class RaftNode:
 					content = f"Node {self.node_id} (leader) received an {request} request\n"
 					with open (f"logs_node_{self.node_id}/dump.txt", "a") as dump:
 						dump.write(content)
-					return raft_pb2.ServeClientResponse(Data=value, LeaderID=str(self.currLeader), Success=True)
+					return raft_pb2.ServeClientResponse(Data=value, LeaderID=str(leader), Success=True)
 			elif operation[0] == "SET":
 					key, value = operation[1], operation[2]
 					# NOTE: Harshit implement this
@@ -659,9 +663,9 @@ class RaftNode:
 					content = f"Node {self.node_id} (leader) received an {request} request\n"
 					with open (f"logs_node_{self.node_id}/dump.txt", "a") as dump:
 						dump.write(content)
-					return raft_pb2.ServeClientResponse(Data="SET operation successful", LeaderID=str(self.currLeader), Success=True)
+					return raft_pb2.ServeClientResponse(Data="SET operation successful", LeaderID=str(leader), Success=True)
 			else:
-					return raft_pb2.ServeClientResponse(Data="INVALID operation", LeaderID=str(self.currLeader), Success=False)
+					return raft_pb2.ServeClientResponse(Data="INVALID operation", LeaderID=str(leader), Success=False)
 
 	def _str_(self):
 		return f"Node ID: {self.node_id}, Node IP: {self.node_ip}, Node Port: {self.node_port}, Node Type: {self.node_type}"
