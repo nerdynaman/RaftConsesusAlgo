@@ -211,20 +211,24 @@ class RaftNode:
 				self.last_log_term = self.current_term
 				self.generate_metadata_file(self.leader_commit, self.current_term, self.node_id, self.last_log_index, self.last_log_term)
 			for peer in self.network:
+				operations = []
 				node_id_peer = ip_port_to_nodeid_mapping[peer]
 				total_no_of_logs = self.get_total_logs(self.node_id)
 				print(total_no_of_logs, node_id_peer, self.array_next_index[node_id_peer], self.last_log_index)
 				logss_appended = self.read_last_n_write_entries(self.node_id, total_no_of_logs - self.array_next_index[node_id_peer] + 1)
-				print(logss_appended)
 				if total_no_of_logs - self.array_next_index[node_id_peer] + 1 > total_no_of_logs:
 					logss_appended = self.read_last_n_write_entries(self.node_id, total_no_of_logs)
+				print("next index, peer", self.array_next_index[node_id_peer], node_id_peer)
+				print(logss_appended)
 				operations.extend(logss_appended)
 				request = raft_pb2.Append_Entries(term=self.current_term, leaderId=str(self.node_id), prevLogIndex=self.last_log_index, prevLogTerm=self.last_log_term, entries=operations, leaderCommit=self.leader_commit)
 				print("sending heartbeat")
-				if self.send_append_entries(peer, request=request):
+				response = None
+				response = self.send_append_entries(peer, request=request)
+				if response == True:
 					commit_counter += 1
 					self.array_next_index[node_id_peer] = self.last_log_index + 1
-				else:
+				elif response == False:
 					if self.array_next_index[node_id_peer] != 0:
 						self.array_next_index[node_id_peer] -= 1
 				operations = []
@@ -253,9 +257,9 @@ class RaftNode:
 					operations.extend(logss_appended)
 				request = raft_pb2.Append_Entries(term=self.current_term, leaderId=str(self.node_id), prevLogIndex=self.last_log_index, prevLogTerm=self.last_log_term, entries=operations, leaderCommit=self.leader_commit)
 				send_success = self.send_append_entries(peer, request=request)
-				if self.array_next_index[node_id_peer] != self.leader_commit + 1 and send_success:
+				if self.array_next_index[node_id_peer] != self.leader_commit + 1 and send_success == True:
 					self.array_next_index[node_id_peer] = self.leader_commit + 1
-				if send_success:
+				elif send_success == True :
 					self.array_next_index[node_id_peer] = self.last_log_index + 1
 		else:
 			print("third")
@@ -266,10 +270,11 @@ class RaftNode:
 			for peer in self.network:
 				node_id_peer = ip_port_to_nodeid_mapping[peer]
 				request = raft_pb2.Append_Entries(term=self.current_term, leaderId=str(self.node_id), prevLogIndex=self.last_log_index, prevLogTerm=self.last_log_term, entries=["NO-OP"], leaderCommit=self.leader_commit)
-				if self.send_append_entries(peer, request=request):
+				response = self.send_append_entries(peer, request=request)
+				if response == True :
 					commit_counter += 1
 					self.array_next_index[node_id_peer] = self.last_log_index + 1
-				else:
+				else :
 					print("failed")
 				print("sending heartbeat")
 			if commit_counter >= (len(self.network) + 1)//2:
@@ -443,6 +448,8 @@ class RaftNode:
 		else:
 			print(5)
 			response.success = False
+			if self.last_log_index == request.prevLogIndex and self.last_log_term == request.prevLogTerm:
+				response.success = True
 			if len(request.entries) == (request.prevLogIndex + 1):
 				response.success = True
 				self.generate_log_file(request.entries, self.current_term, self.node_id, (self.get_total_logs(self.node_id)))
@@ -468,8 +475,8 @@ class RaftNode:
 			# DO response check
 		except grpc.RpcError as e:
 			print("error ", e)
-			return False
-		print(response)
+			return None
+		print("response success", response.success)
 		return response.success
 	
 	def get_value_from_database(self, key):
