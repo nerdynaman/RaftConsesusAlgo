@@ -27,7 +27,7 @@ class RaftClient:
                 else:
                     self.leader_id = None
                 if response.Data == "INCORRECT Leader":
-                    print(f"FAIL1: Node {response.LeaderID} is not the leader")
+                    print(f"FAIL1: Node {self.leader_id} is not the leader")
                 elif response.Data == "INVALID operation":
                     print(f"FAIL: Invalid {request} operation")
             return response
@@ -71,7 +71,7 @@ class RaftClient:
         return None, None, False
 
 def main():
-    node_addresses = ['127.0.0.1:50051', '127.0.0.1:50052', '127.0.0.1:50053', '127.0.0.1:50054', '127.0.0.1:50055']  # Example addresses
+    node_addresses = ['10.190.0.2:50051', '10.190.0.3:50052', '10.190.0.4:50053', '10.190.0.5:50054', '10.190.0.6:50055']  # Example addresses
     client = RaftClient(node_addresses)
 
     while True:

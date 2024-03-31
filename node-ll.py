@@ -7,6 +7,8 @@ from enum import Enum
 import raft_pb2
 import raft_pb2_grpc
 import time
+import os
+import random
 
 operations_client_requested = []
 get_operations_answers = []
@@ -28,7 +30,7 @@ class RaftNode:
 				return ""
 			return lines[-1]
 		
-	def __init__(self, node_id:int , node_ip:str, node_port:int , node_type:NodeType):
+	def __init__(self, node_id:int , node_ip:str, node_port:int , node_type:NodeType, peer_IPs:dict):
 		#node identifier
 		self.node_id = node_id
 		self.node_ip = node_ip
@@ -37,16 +39,17 @@ class RaftNode:
 		self.network = {} #dict of conn with peers in same cluster
 		self.node_type = node_type
 		#election
-		if node_id == 1:
-			self.election_timeout = 5
-		elif node_id == 2:
-			self.election_timeout = 6
-		elif node_id == 3:
-			self.election_timeout = 7
-		elif node_id == 4:
-			self.election_timeout = 8
-		elif node_id == 5:
-			self.election_timeout = 9
+		# if node_id == 1:
+		# 	self.election_timeout = 5
+		# elif node_id == 2:
+		# 	self.election_timeout = 6
+		# elif node_id == 3:
+		# 	self.election_timeout = 7
+		# elif node_id == 4:
+		# 	self.election_timeout = 8
+		# elif node_id == 5:
+		# 	self.election_timeout = 9
+		self.election_timeout = random.randint(5, 10)
 		self.election_timer = None
 		self.current_term = 0
 		self.last_voted_term = None
@@ -70,32 +73,8 @@ class RaftNode:
 		self.key_Value_calculator = {}
 		self.logs = []
 		self.start_election_timer()
-		if node_id == 1:
-			self.add_peer("127.0.0.1", 50052, 2)
-			self.add_peer("127.0.0.1", 50053, 3)
-			self.add_peer("127.0.0.1", 50054, 4)
-			self.add_peer("127.0.0.1", 50055, 5)
-		elif node_id == 2:
-			self.add_peer("127.0.0.1", 50051, 1)
-			self.add_peer("127.0.0.1", 50053, 3)
-			self.add_peer("127.0.0.1", 50054, 4)
-			self.add_peer("127.0.0.1", 50055, 5)
-		elif node_id == 3:
-			self.add_peer("127.0.0.1", 50051, 1)
-			self.add_peer("127.0.0.1", 50052, 2)
-			self.add_peer("127.0.0.1", 50054, 4)
-			self.add_peer("127.0.0.1", 50055, 5)
-		elif node_id == 4:
-			self.add_peer("127.0.0.1", 50051, 1)
-			self.add_peer("127.0.0.1", 50052, 2)
-			self.add_peer("127.0.0.1", 50053, 3)
-			self.add_peer("127.0.0.1", 50055, 5)
-		elif node_id == 5:
-			self.add_peer("127.0.0.1", 50051, 1)
-			self.add_peer("127.0.0.1", 50052, 2)
-			self.add_peer("127.0.0.1", 50053, 3)
-			self.add_peer("127.0.0.1", 50054, 4)
-
+		for peer in peer_IPs:
+			self.add_peer(peer_IPs[peer], int("5005"+str(peer)), peer)
 
 	def generate_log_file(self, operations, term, Node_id, n_garbage):
 		print("Generating log file", Node_id, operations)
@@ -400,6 +379,7 @@ class RaftNode:
 			self.vote_count += 1
 		if response.term > self.current_term:
 			self.current_term = response.term
+		print("curent candidate term", self.current_term)
 		print(response)
 		return response.leaseDuration
 
@@ -407,16 +387,23 @@ class RaftNode:
 		print("RequestVote called")
 		flag = 0
 		response = raft_pb2.RequestVoteResponse()
+		if request.term > self.current_term:
+			self.current_term = request.term
 		if self.current_term == self.last_voted_term:
+			print("1 error",end=" ")
+			print(request.term)
 			response.voteGranted = False
 			response.term = self.current_term
 		elif request.term < self.current_term:
+			print("2 error")
 			response.voteGranted = False
 			response.term = self.current_term
 		elif request.lastLogTerm < self.last_log_term:
+			print("3 error")
 			response.success = False
 			response.term = self.current_term
 		elif request.lastLogIndex < self.last_log_index:
+			print("4 error")
 			response.success = False
 			response.term = self.current_term
 		else:
@@ -431,8 +418,6 @@ class RaftNode:
 			response.term = self.current_term
 			if self.heartbeat_timer:
 				self.heartbeat_timer.cancel
-		if request.term > self.current_term:
-			self.current_term = request.term
 		content = ""
 		if flag == 1:
 			content = f"Vote granted for Node {request.candidateId} in term {request.term}\n"
@@ -679,10 +664,10 @@ class RaftNode:
 	
 		
 
-def startNode(nodeId:int, nodeIp:str, nodePort:int, nodeType:NodeType):
+def startNode(nodeId:int, nodeIp:str, nodePort:int, nodeType:NodeType, network_ip_dict:dict):
 	# making grpc connections
 	server = grpc.server(concurrent.futures.ThreadPoolExecutor(max_workers=10))
-	raft_pb2_grpc.add_RaftServicer_to_server(RaftNode(nodeId,"127.0.0.1", nodePort, nodeType), server)
+	raft_pb2_grpc.add_RaftServicer_to_server(RaftNode(nodeId,nodeIp, nodePort, nodeType, network_ip_dict), server)
 	server.add_insecure_port(f"[::]:{nodePort}")
 	server.start()
 	server.wait_for_termination()
@@ -693,44 +678,27 @@ def startNode(nodeId:int, nodeIp:str, nodePort:int, nodeType:NodeType):
 	
 if __name__ == "__main__":
 	userInput = int(input("Enter the node id: "))
-	if userInput == 1:
-		startNode(1, "127.0.0.1", 50051, NodeType.FOLLOWER)
-	elif userInput == 2:
-		startNode(2, "127.0.0.1", 50052, NodeType.FOLLOWER)
-	elif userInput == 3:
-		startNode(3, "127.0.0.1", 50053, NodeType.FOLLOWER)
-	elif userInput == 4:
-		startNode(4, "127.0.0.1", 50054, NodeType.FOLLOWER)
-	elif userInput == 5:
-		startNode(5, "127.0.0.1", 50055, NodeType.FOLLOWER)
-	elif userInput == 9:
-		with open("logs_node_1/logs.txt", "w") as log_file:
+	cleanup = int(input("Do you want to cleanup the logs?: "))
+	if cleanup == 9:
+	# check if base dirs exists otherwise create them
+		if not os.path.exists(f"logs_node_{userInput}"):
+			os.mkdir(f"logs_node_{userInput}")
+		# create log files
+		with open(f"logs_node_{userInput}/logs.txt", "w") as log_file:
 			pass
-		with open("logs_node_2/logs.txt", "w") as log_file:
+		with open(f"logs_node_{userInput}/metadata.txt", "w") as metadata_file:
 			pass
-		with open("logs_node_3/logs.txt", "w") as log_file:
+		with open(f"logs_node_{userInput}/dump.txt", "w") as dump:
 			pass
-		with open("logs_node_4/logs.txt", "w") as metadata_file:
-			pass
-		with open("logs_node_5/logs.txt", "w") as metadata_file:
-			pass
-		with open("logs_node_1/metadata.txt", "w") as metadata_file:
-			pass
-		with open("logs_node_2/metadata.txt", "w") as metadata_file:
-			pass
-		with open("logs_node_3/metadata.txt", "w") as metadata_file:
-			pass
-		with open("logs_node_4/metadata.txt", "w") as metadata_file:
-			pass
-		with open("logs_node_5/metadata.txt", "w") as metadata_file:
-			pass
-		with open("logs_node_1/dump.txt", "w") as dump:
-			pass
-		with open("logs_node_2/dump.txt", "w") as dump:
-			pass
-		with open("logs_node_3/dump.txt", "w") as dump:
-			pass
-		with open("logs_node_4/dump.txt", "w") as dump:
-			pass
-		with open("logs_node_5/dump.txt", "w") as dump:
-			pass
+		
+	userInputIP = input("Enter the node IP for all nodes space seperated: ")
+	# nodeIP for current node will be at userInputIP.split()[userInput-1]
+	network_ip = userInputIP.split()
+	self_ip = network_ip[userInput-1]
+	network_ip_dict = {}
+	for i in range(len(network_ip)):
+		if i == userInput - 1:
+			continue
+		network_ip_dict[i+1] = network_ip[i]
+	if userInput != 9:
+		startNode(userInput, self_ip, 50050 + userInput, NodeType.FOLLOWER, network_ip_dict)
