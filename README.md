@@ -2,7 +2,7 @@
 This project is a comprehensive implementation of the Raft consensus algorithm in Python. Raft is designed to provide a robust, fault-tolerant mechanism for managing replicated logs across multiple servers. It ensures that all nodes agree on the values stored in the log, even in the presence of failures.
 
 # Entities
-1) Node: It is a replicated state machine. Each node can take on one of three roles—leader, follower, or candidate—and works together with other nodes to ensure data consistency and fault tolerance in a distributed system. Along with serving client requests when in leader status otherwise processing appendentries.
+1) Node: It is a replicated state machine. Each node can take on one of three roles, leader, follower, or candidate and works together with other nodes to ensure data consistency and fault tolerance in a distributed system. Along with serving client requests when in leader status otherwise processing appendentries.
 2) gRPC: It is responsible for all the communication between nodes such as sending client requests, append entries between nodes, leader election messages.
 
 # Features
